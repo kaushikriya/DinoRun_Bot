@@ -3,6 +3,10 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 import time
 import os
+import numpy as np
+import cv2
+import PIL
+
 
 GAMMA = 0.99
 OBSERVATION = 50000.
@@ -70,3 +74,37 @@ class DinoAgent:
         self._game.press_up()
     def duck(self):
         self._game.press_down()
+
+class Game_sate:
+    def __init__(self, agent, game):
+        self._agent = agent
+        self._game = game
+
+    def get_state(self, actions):
+        score = self._game.get_score()
+        reward = 0.1 * score / 10
+        is_over = False
+        if actions[1] == 1:
+            self._agent.jump()
+            reward = 0.1 * score / 11
+        image = grab_screen()
+
+        if self._agent.is_crashed():
+            self._game.restart()
+            reward = -11 / score
+            is_over = True
+        return image, reward, is_over
+
+
+def grab_screen(_driver=None):
+    screen = np.array(PIL.ImageGrab.grab(bbox=(40, 180, 440, 400)))
+    image = process_img(screen)
+    return image
+
+
+def process_img(image):
+
+    image = cv2.resize(image,(20,40))
+    image = image[2:38, 10:50]
+    image = cv2.Canny(image, threshold1=100, threshold2=200)
+    return image
