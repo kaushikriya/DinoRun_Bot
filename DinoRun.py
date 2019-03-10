@@ -6,6 +6,11 @@ import os
 import numpy as np
 import cv2
 import PIL
+import keras
+import random
+import queue
+from keras import optimizers
+from keras.layers import Dense,Conv2D,Flatten,MaxPooling2D,Activation
 
 
 GAMMA = 0.99
@@ -108,3 +113,108 @@ def process_img(image):
     image = image[2:38, 10:50]
     image = cv2.Canny(image, threshold1=100, threshold2=200)
     return image
+
+def buildmodel():
+    print("Now we build the model")
+    model = keras.Sequential()
+    model.add(
+        Conv2D(32, (8, 8), padding='same', strides=(4, 4), input_shape=(20,40,4)))  # 80*80*4
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Activation('relu'))
+    model.add(Conv2D(64, (4, 4), strides=(2, 2), padding='same'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Activation('relu'))
+    model.add(Conv2D(64, (3, 3), strides=(1, 1), padding='same'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Activation('relu'))
+    model.add(Flatten())
+    model.add(Dense(512))
+    model.add(Activation('relu'))
+    model.add(Dense(ACTIONS))
+    adam = optimizers.Adam(lr=LEARNING_RATE)
+    model.compile(loss='mse', optimizer=adam)
+    print("We finish building the model")
+    return model
+
+
+
+
+def trainNetwork(model, game_state):
+    D = queue.deque()
+    do_nothing = np.zeros(ACTIONS)
+    do_nothing[0] = 1
+
+    x_t, r_0, terminal = game_state.get_state(do_nothing)
+    s_t = np.stack((x_t, x_t, x_t, x_t), axis=2).reshape(1, 20, 40,
+                                                         4)
+
+    OBSERVE = OBSERVATION
+    epsilon = INITIAL_EPSILON
+    t = 0
+    while (True):
+
+        loss = 0
+        Q_sa = 0
+        action_index = 0
+        r_t = 0
+        a_t = np.zeros([ACTIONS])
+
+        if random.random() <= epsilon:
+            print("----------Random Action----------")
+            action_index = random.randrange(ACTIONS)
+            a_t[action_index] = 1
+        else:
+            q = model.predict(s_t)
+            max_Q = np.argmax(q)
+            action_index = max_Q
+            a_t[action_index] = 1
+        if epsilon > FINAL_EPSILON and t > OBSERVE:
+            epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
+
+        x_t1, r_t, terminal = game_state.get_state(a_t)
+        last_time = time.time()
+        x_t1 = x_t1.reshape(1, x_t1.shape[0], x_t1.shape[1], 1)
+        s_t1 = np.append(x_t1, s_t[:, :, :, :3], axis=3)
+
+        D.append((s_t, action_index, r_t, s_t1, terminal))
+        if len(D) > REPLAY_MEMORY:
+            D.popleft()
+
+
+        if t > OBSERVE:
+            trainBatch(random.sample(D, BATCH))
+        s_t = s_t1
+        t = t + 1
+        print("TIMESTEP", t, "/ EPSILON", epsilon, "/ ACTION", action_index, "/ REWARD", r_t, "/ Q_MAX ", np.max(Q_sa),
+              "/ Loss ", loss)
+
+def trainBatch(minibatch,model):
+    global s_t
+    inputs = np.zeros((BATCH, s_t.shape[1], s_t.shape[2], s_t.shape[3]))  # 32, 20, 40, 4
+    targets = np.zeros((inputs.shape[0], ACTIONS))  # 32, 2
+    loss = 0
+
+    for i in range(0, len(minibatch)):
+        state_t = minibatch[i][0]
+        action_t = minibatch[i][1]
+        reward_t = minibatch[i][2]
+        state_t1 = minibatch[i][3]
+        terminal = minibatch[i][4]
+        inputs[i:i + 1] = state_t
+        targets[i] = model.predict(state_t)
+        Q_sa = model.predict(state_t1)
+        if terminal:
+            targets[i, action_t] = reward_t
+        else:
+            targets[i, action_t] = reward_t + GAMMA * np.max(Q_sa)
+
+    loss += model.train_on_batch(inputs, targets)
+
+def playGame(observe=False):
+    game = Game()
+    dino = DinoAgent(game)
+    game_state = Game_sate(dino,game)
+    model = buildmodel()
+    trainNetwork(model,game_state)
+
+playGame(observe=False)
